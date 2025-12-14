@@ -1,15 +1,17 @@
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
+import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { ChevronLeft, Coins, Heart, MessageCircle } from 'lucide-react-native';
+import { ChevronLeft, Coins, Lock, Play, Users, X } from 'lucide-react-native';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Animated,
   FlatList,
   Image,
+  KeyboardAvoidingView,
   Modal,
+  Platform, Share,
   StyleSheet, Text,
   TextInput,
   TouchableOpacity,
@@ -22,10 +24,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import 'react-native-url-polyfill/auto';
 
-// REPLACE WITH YOUR KEYS
-const SUPABASE_URL = 'YOUR_SUPABASE_URL_HERE';
-const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY_HERE';
-const OPENAI_API_KEY = ''; 
+// CREDENTIALS
+const SUPABASE_URL = 'https://mqlotxgafucybdlagpgn.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xbG90eGdhZnVjeWJkbGFncGduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0Mjc4NjMsImV4cCI6MjA4MDAwMzg2M30.fSH9VRQRQjmeXBOaOFA9DugL0-BpVDjYFZu-GepTC1Q';
+
+// YOUR API KEY
+const OPENAI_API_KEY = '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'; 
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
@@ -37,86 +41,84 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 });
 
 const THEME = {
-  background: '#121212',
-  surface: '#1E1E1E',
-  primary: '#D4AF37', 
-  text: '#E0E0E0',
+  background: '#000000',
+  text: '#FFFFFF',
   textSecondary: '#A0A0A0',
-  danger: '#CF6679',
-  success: '#03DAC6',
+  gradientColors: ['#D4AF37', '#800080', '#0000FF'], // Gold -> Purple -> Blue
+  surface: '#121212',
 };
 
-// --- DATA ---
-const INITIAL_PERSONAS = [
-  { 
-    id: '1', name: 'Priya', tagline: 'Warm listener', desc: 'I am here to listen without judgment.',
-    image: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=600&q=80',
-    pricePerMin: 10,
-  },
-  { 
-    id: '2', name: 'Ananya', tagline: 'Fun & flirty', desc: 'Let’s forget about work for a while.',
-    image: 'https://images.unsplash.com/photo-1596205844976-7494ccb19129?w=600&q=80',
-    pricePerMin: 15,
-  },
-  { 
-    id: '3', name: 'Meera', tagline: 'Calm & Mature', desc: 'A quiet space for deep conversations.',
-    image: 'https://images.unsplash.com/photo-1621784563330-caee0b138a00?w=600&q=80',
-    pricePerMin: 10,
-  },
-];
-
 const COIN_PACKS = [
-  { id: '1', amount: 100, price: '₹99', tag: '' },
-  { id: '2', amount: 500, price: '₹399', tag: 'Best Value' },
-  { id: '3', amount: 1000, price: '₹699', tag: '+10% Free' },
+  { id: '1', amount: 100, price: '₹99' },
+  { id: '2', amount: 500, price: '₹399' },
+  { id: '3', amount: 1000, price: '₹699' },
+  { id: '4', amount: 2500, price: '₹1499' },
 ];
 
-// --- CONTEXT ---
 const AppContext = createContext();
 
 const AppProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [coins, setCoins] = useState(0); 
-  const [isLoading, setIsLoading] = useState(true);
+  const [agents, setAgents] = useState([]);
+  const [loadingStep, setLoadingStep] = useState(0); 
+  const [lowBalanceVisible, setLowBalanceVisible] = useState(false);
 
-  // 1. Session Check
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const initApp = async () => {
+      setLoadingStep(1); 
+      const { data: { session } } = await supabase.auth.getSession();
+      
       if(session?.user) {
         setUser(session.user);
-        fetchProfile(session.user.id);
+        await fetchData(session.user.id);
       } else {
-        setIsLoading(false); // No user, show Onboarding
+        setLoadingStep(3); 
       }
-    });
+    };
+    initApp();
 
-    supabase.auth.onAuthStateChange((_event, session) => {
+    supabase.auth.onAuthStateChange(async (_event, session) => {
       if(session?.user) {
         setUser(session.user);
-        fetchProfile(session.user.id);
+        await fetchData(session.user.id);
       } else {
         setUser(null);
-        setIsLoading(false);
       }
     });
   }, []);
 
-  // 2. Fetch User Coins
-  const fetchProfile = async (userId) => {
-    try {
-      const { data, error } = await supabase
+  const fetchData = async (userId) => {
+    setLoadingStep(2); 
+    
+    // 1. GET OR CREATE PROFILE
+    let { data: profile, error } = await supabase.from('profiles').select('coins').eq('id', userId).single();
+    
+    if (!profile) {
+      console.log("Creating new profile...");
+      const { data: newProfile, error: insertError } = await supabase
         .from('profiles')
-        .select('coins')
-        .eq('id', userId)
+        .insert([{ id: userId, coins: 30 }])
+        .select()
         .single();
-      
-      if (data) setCoins(data.coins);
-      if (error && error.code !== 'PGRST116') console.error('Error fetching profile:', error);
-    } catch (e) {
-      console.log(e);
-    } finally {
-      setIsLoading(false);
+        
+      if (newProfile) setCoins(newProfile.coins);
+      if (insertError) console.error("Profile creation failed:", insertError);
+    } else {
+      setCoins(profile.coins);
     }
+
+    // 2. GET AGENTS
+    const { data: agentsData } = await supabase.from('agents').select('*').eq('is_active', true);
+    if (agentsData && agentsData.length > 0) {
+      setAgents(agentsData);
+    } else {
+       setAgents([
+         { id: 99, name: 'Setup Needed', tagline: 'Run SQL Script', image_url: 'https://via.placeholder.com/150', price_per_min: 0, system_prompt: '' }
+       ]);
+    }
+
+    setLoadingStep(3); 
   };
 
   const updateCoins = async (newAmount) => {
@@ -126,406 +128,440 @@ const AppProvider = ({ children }) => {
   };
 
   const addCoins = (amount) => updateCoins(coins + amount);
+  
   const deductCoins = (amount) => {
     if (coins >= amount) {
       updateCoins(coins - amount);
       return true;
+    } else {
+      setLowBalanceVisible(true);
+      return false;
     }
-    return false;
   };
 
-  // 3. ANONYMOUS LOGIN FUNCTION
   const loginAnonymously = async () => {
-    setIsLoading(true);
     const { error } = await supabase.auth.signInAnonymously();
-    if (error) {
-        Alert.alert("Error", "Could not sign in. Please try again.");
-        setIsLoading(false);
-    }
-    // Context listener will handle the transition to Lobby
+    if (error) Alert.alert("Connection Error", error.message);
   };
 
   return (
     <AppContext.Provider value={{ 
-      user, coins, isLoading, addCoins, deductCoins, loginAnonymously 
+      user, coins, agents, loadingStep, 
+      addCoins, deductCoins, loginAnonymously,
+      lowBalanceVisible, setLowBalanceVisible
     }}>
       {children}
     </AppContext.Provider>
   );
 };
 
-// --- COMPONENTS ---
+const GradientBtn = ({ onPress, text, style, disabled }) => (
+  <TouchableOpacity onPress={onPress} activeOpacity={0.8} style={[{ width: '100%' }, style]} disabled={disabled}>
+    <LinearGradient
+      colors={disabled ? ['#333', '#333'] : THEME.gradientColors}
+      start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+      style={styles.gradientBtn}
+    >
+      <Text style={[styles.btnText, disabled && { color: '#666' }]}>{text}</Text>
+    </LinearGradient>
+  </TouchableOpacity>
+);
 
-// 1. ONBOARDING SCREEN (Device Login)
-const OnboardingScreen = () => {
-  const { loginAnonymously, isLoading } = useContext(AppContext);
-
+const LowBalanceNudge = () => {
+  const { lowBalanceVisible, setLowBalanceVisible, addCoins } = useContext(AppContext);
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.centerContent}>
-        <View style={styles.brandContainer}>
-          <Heart fill={THEME.primary} color={THEME.primary} size={60} />
-          <Text style={styles.titleBig}>Solace</Text>
-        </View>
-
-        <Text style={styles.subtitle}>Find warmth, comfort, and someone to talk to.</Text>
-        
-        <TouchableOpacity style={styles.btnPrimary} onPress={loginAnonymously} disabled={isLoading}>
-           {isLoading ? (
-             <ActivityIndicator color="black" /> 
-           ) : (
-             <Text style={styles.btnText}>Start Journey</Text>
-           )}
-        </TouchableOpacity>
-        
-        <Text style={styles.caption}>Secure • Anonymous • Private</Text>
+    <Modal visible={lowBalanceVisible} transparent animationType="slide">
+      <View style={styles.modalOverlay}>
+        <LinearGradient colors={['#1a1a1a', '#000']} style={styles.nudgeCard}>
+          <TouchableOpacity style={styles.closeBtn} onPress={() => setLowBalanceVisible(false)}>
+            <X color="#fff" size={24} />
+          </TouchableOpacity>
+          <Text style={styles.nudgeTitle}>Running Low?</Text>
+          <View style={styles.dealBox}>
+            <Text style={styles.dealText}>Special Offer</Text>
+            <Text style={styles.dealPrice}>₹50 / 60 Coins</Text>
+          </View>
+          <GradientBtn text="Get Deal Now" onPress={() => { addCoins(60); setLowBalanceVisible(false); }} />
+        </LinearGradient>
       </View>
-    </SafeAreaView>
+    </Modal>
   );
 };
 
-// 2. Lobby (Unchanged)
-const LobbyScreen = ({ navigation }) => {
-  const { coins } = useContext(AppContext);
+const SplashScreen = ({ navigation }) => {
+  const { loadingStep, user } = useContext(AppContext);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const loadBarAnim = useRef(new Animated.Value(0)).current;
 
-  const renderPersona = ({ item }) => (
-    <TouchableOpacity 
-      style={styles.card} 
-      activeOpacity={0.9}
-      onPress={() => navigation.navigate('Chat', { persona: item })}
-    >
-      <Image source={{ uri: item.image }} style={styles.cardImage} />
-      <View style={styles.cardContent}>
-        <Text style={styles.cardTitle}>{item.name}</Text>
-        <Text style={styles.cardTag}>{item.tagline}</Text>
-        <View style={styles.cardActions}>
-          <View style={styles.actionBtn}>
-            <MessageCircle size={16} color={THEME.background} />
-            <Text style={styles.actionBtnText}>Chat ({item.pricePerMin}c/min)</Text>
-          </View>
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.1, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true })
+      ])
+    ).start();
+
+    Animated.timing(loadBarAnim, {
+      toValue: loadingStep * 33, 
+      duration: 500,
+      useNativeDriver: false
+    }).start();
+
+    if (loadingStep === 3) {
+      setTimeout(() => {
+        navigation.replace(user ? 'Lobby' : 'Onboarding');
+      }, 500);
+    }
+  }, [loadingStep]);
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.centerContent}>
+        <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+          <LinearGradient colors={THEME.gradientColors} style={styles.logoBox}>
+            <Text style={{ fontSize: 40, fontWeight: 'bold', color: '#fff' }}>W</Text>
+          </LinearGradient>
+        </Animated.View>
+        <View style={styles.loadTrack}>
+          <Animated.View style={[styles.loadFill, { width: loadBarAnim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'] }) }]} />
         </View>
       </View>
+    </View>
+  );
+};
+
+const OnboardingScreen = () => {
+  const { loginAnonymously } = useContext(AppContext);
+  return (
+    <View style={styles.container}>
+      <View style={styles.centerContent}>
+        <Text style={styles.titleBig}>WohApp!!</Text>
+        <Text style={styles.subtitle}>Enter the world of mystery.</Text>
+        <GradientBtn text="Find Dostti" onPress={loginAnonymously} />
+        <Text style={styles.caption}>Secure • Anonymous • Private</Text>
+      </View>
+    </View>
+  );
+};
+
+const LobbyScreen = ({ navigation }) => {
+  const { coins, agents } = useContext(AppContext);
+
+  const renderAgent = ({ item }) => (
+    <TouchableOpacity 
+      style={styles.card} activeOpacity={0.9}
+      onPress={() => navigation.navigate('Chat', { persona: item })}
+    >
+      <Image source={{ uri: item.image_url }} style={styles.cardImage} />
+      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.95)']} style={styles.cardOverlay}>
+        <Text style={styles.cardTitle}>{item.name}</Text>
+        <Text style={styles.cardTag}>{item.tagline}</Text>
+        <View style={styles.priceBadge}>
+            <Text style={styles.priceText}>{item.price_per_min} coins/min</Text>
+        </View>
+      </LinearGradient>
     </TouchableOpacity>
   );
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={styles.miniLogo}>
-            <Heart fill={THEME.primary} color={THEME.primary} size={18} />
+        <Text style={styles.headerBrand}>WohApp!!</Text>
+        
+        <TouchableOpacity onPress={() => navigation.navigate('Store')}>
+          <View style={styles.coinPill}>
+            <Coins size={14} color="#FFD700" />
+            <Text style={styles.coinPillText}>{coins}</Text>
           </View>
-          <Text style={styles.headerBrand}>Solace</Text>
-        </View>
-        <TouchableOpacity style={styles.coinBadge} onPress={() => navigation.navigate('Store')}>
-          <Coins size={16} color={THEME.background} />
-          <Text style={styles.coinText}>{coins}</Text>
         </TouchableOpacity>
       </View>
 
       <FlatList
-        data={INITIAL_PERSONAS}
-        renderItem={renderPersona}
-        keyExtractor={item => item.id}
+        data={agents}
+        renderItem={renderAgent}
+        keyExtractor={item => item.id.toString()}
         contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
-        showsVerticalScrollIndicator={false}
       />
+      
+      <View style={styles.fabContainer}>
+        <TouchableOpacity style={styles.fab} onPress={() => navigation.navigate('Store')}>
+          <LinearGradient colors={THEME.gradientColors} style={styles.fabGradient}>
+             <Users color="#fff" size={20} />
+          </LinearGradient>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.fab} onPress={() => navigation.navigate('Store')}>
+           <LinearGradient colors={THEME.gradientColors} style={styles.fabGradient}>
+             <Play color="#fff" size={20} />
+           </LinearGradient>
+        </TouchableOpacity>
+      </View>
+      <LowBalanceNudge />
     </SafeAreaView>
   );
 };
 
-// 3. Chat Screen (Persisted & AI Connected)
 const ChatScreen = ({ route, navigation }) => {
   const { persona } = route.params;
-  const { user, coins, deductCoins } = useContext(AppContext);
+  const { coins, deductCoins } = useContext(AppContext);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [timeSpentSeconds, setTimeSpentSeconds] = useState(0);
-  const flatListRef = useRef();
-
+  
   useEffect(() => {
-    const loadHistory = async () => {
-      const { data } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('persona_id', persona.id)
-        .order('created_at', { ascending: true });
-
-      if (data && data.length > 0) {
-        setMessages(data.map(m => ({ id: m.id.toString(), text: m.text, sender: m.sender })));
-      } else {
-        setMessages([{ id: '0', text: `Hi! I'm ${persona.name}. ${persona.desc}`, sender: 'ai' }]);
-      }
-    };
-    loadHistory();
-  }, [user.id, persona.id]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-        setTimeSpentSeconds(prev => {
-            const nextVal = prev + 1;
-            if (nextVal > 0 && nextVal % 60 === 0) {
-                 const success = deductCoins(persona.pricePerMin);
-                 if (!success) {
-                     clearInterval(interval);
-                     Alert.alert("Out of Coins", "Please recharge.", [
-                         { text: "Store", onPress: () => navigation.navigate('Store') },
-                         { text: "Leave", onPress: () => navigation.goBack() }
-                     ]);
-                 }
-            }
-            return nextVal;
-        });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [coins]); 
+    setMessages([{ id: '0', text: `Hi, I'm ${persona.name}.`, sender: 'ai', type: 'text' }]);
+    const timer = setInterval(() => { deductCoins(persona.price_per_min); }, 60000); 
+    return () => clearInterval(timer);
+  }, []);
 
   const sendMessage = async () => {
-    if (!input.trim()) return;
-    const tempId = Date.now().toString();
-    const userMsg = { id: tempId, text: input, sender: 'user' };
+    if(!input.trim()) return;
+    const userMsg = { id: Date.now().toString(), text: input, sender: 'user', type: 'text' };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setIsTyping(true);
 
-    await supabase.from('messages').insert({
-        user_id: user.id,
-        persona_id: persona.id,
-        text: userMsg.text,
-        sender: 'user'
-    });
-
     try {
-      let aiText = "";
-      const historyContext = messages.slice(-10).map(m => ({ 
-          role: m.sender === 'user' ? 'user' : 'assistant', 
-          content: m.text 
-      }));
+      let aiText = "I'm having trouble connecting.";
 
       if (OPENAI_API_KEY) {
-        const response = await fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${OPENAI_API_KEY}` },
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${OPENAI_API_KEY}`
+          },
           body: JSON.stringify({
             model: "gpt-4o-mini",
             messages: [
-              { role: "system", content: `You are ${persona.name}, ${persona.tagline}. Be warm, flirty. Keep replies short.` },
-              ...historyContext,
+              { role: "system", content: persona.system_prompt || "You are a friendly companion." },
+              ...messages.slice(-5).map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text })),
               { role: "user", content: input }
             ]
           })
         });
+
         const data = await response.json();
-        aiText = data.choices?.[0]?.message?.content || "...";
-      } else {
-        await new Promise(r => setTimeout(r, 1500));
-        aiText = "I'm listening... tell me more!";
+        
+        if (data.error) {
+          console.error("OpenAI Error:", data.error);
+          aiText = `Error: ${data.error.message}`;
+        } else if (data.choices && data.choices[0]) {
+          aiText = data.choices[0].message.content;
+        }
+      } 
+
+      setMessages(prev => [...prev, { id: Date.now().toString(), text: aiText, sender: 'ai', type: 'text' }]);
+      
+      const isImage = Math.random() > 0.7; 
+      if (isImage) {
+        setTimeout(() => {
+           const aiImgMsg = {
+             id: (Date.now()+1).toString(), sender: 'ai', type: 'image',
+             image_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&q=80',
+             is_locked: true, cost: 15, text: 'Sent a photo'
+           };
+           setMessages(prev => [...prev, aiImgMsg]);
+        }, 1000);
       }
 
-      const { data: aiDbMsg } = await supabase.from('messages').insert({
-        user_id: user.id,
-        persona_id: persona.id,
-        text: aiText,
-        sender: 'ai'
-      }).select().single();
+    } catch (e) {
+      console.error("Network Error:", e);
+      Alert.alert("Network Error", "Check your internet connection.");
+    } finally {
+      setIsTyping(false);
+    }
+  };
 
-      const aiMsg = { id: aiDbMsg ? aiDbMsg.id.toString() : Date.now().toString(), text: aiText, sender: 'ai' };
-      setMessages(prev => [...prev, aiMsg]);
-    } catch (e) { console.error(e); } finally { setIsTyping(false); }
+  const unlockImage = (msgId, cost) => {
+    if(deductCoins(cost)) {
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_locked: false } : m));
+    }
+  };
+
+  const renderMsg = ({ item }) => {
+    if (item.type === 'image') {
+       return (
+         <View style={[styles.msgBubble, styles.msgAi]}>
+           {item.is_locked ? (
+             <View style={styles.lockedImgBox}>
+               <Image source={{ uri: item.image_url }} style={styles.lockedImg} blurRadius={15} />
+               <View style={styles.lockOverlay}>
+                 <Lock color="#fff" size={24} />
+                 <Text style={{color:'#fff', marginBottom:5}}>Private Photo</Text>
+                 <TouchableOpacity onPress={() => unlockImage(item.id, item.cost)}>
+                   <LinearGradient colors={THEME.gradientColors} start={{x:0,y:0}} end={{x:1,y:0}} style={styles.unlockBtn}>
+                     <Text style={{color:'#fff', fontWeight:'bold'}}>Unlock {item.cost}c</Text>
+                   </LinearGradient>
+                 </TouchableOpacity>
+               </View>
+             </View>
+           ) : (
+             <Image source={{ uri: item.image_url }} style={styles.unlockedImg} />
+           )}
+         </View>
+       );
+    }
+    return (
+      <View style={[styles.msgBubble, item.sender === 'user' ? styles.msgUser : styles.msgAi]}>
+        <Text style={item.sender === 'user' ? styles.msgTextUser : styles.msgTextAi}>{item.text}</Text>
+      </View>
+    );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <ChevronLeft color={THEME.text} size={28} />
-        </TouchableOpacity>
-        <Image source={{ uri: persona.image }} style={styles.headerAvatar} />
-        <View style={{ flex: 1, marginLeft: 10 }}>
-          <Text style={styles.headerTitle}>{persona.name}</Text>
-          <Text style={styles.statusText}>Session: {Math.floor(timeSpentSeconds / 60)}m {timeSpentSeconds % 60}s</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()}><ChevronLeft color="#fff" /></TouchableOpacity>
+        <Image source={{ uri: persona.image_url }} style={styles.headerAvatar} />
+        <View><Text style={styles.headerTitle}>{persona.name}</Text><Text style={styles.statusText}>15c/min</Text></View>
+      </View>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{flex:1}}>
+        <FlatList data={messages} renderItem={renderMsg} contentContainerStyle={{padding:16}} />
+        <View style={styles.inputArea}>
+          <TextInput style={styles.input} value={input} onChangeText={setInput} placeholder="Type..." placeholderTextColor="#666" />
+          <TouchableOpacity onPress={sendMessage}>
+             <LinearGradient colors={THEME.gradientColors} start={{x:0,y:0}} end={{x:1,y:0}} style={styles.sendBtn}><Text style={{fontWeight:'bold'}}>Send</Text></LinearGradient>
+          </TouchableOpacity>
         </View>
-        <View style={styles.coinBadge}><Text style={styles.coinText}>{coins}c</Text></View>
-      </View>
-
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        keyExtractor={item => item.id}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
-        renderItem={({ item }) => (
-          <View style={[styles.msgBubble, item.sender === 'user' ? styles.msgUser : styles.msgAi]}>
-            <Text style={item.sender === 'user' ? styles.msgTextUser : styles.msgTextAi}>{item.text}</Text>
-          </View>
-        )}
-        contentContainerStyle={{ padding: 16 }}
-      />
-      {isTyping && <Text style={styles.typingIndicator}>{persona.name} is typing...</Text>}
-      <View style={styles.inputArea}>
-        <TextInput style={styles.input} value={input} onChangeText={setInput} placeholder="Type a message..." placeholderTextColor="#666" />
-        <TouchableOpacity style={styles.sendBtn} onPress={sendMessage}><Text style={styles.sendBtnText}>Send</Text></TouchableOpacity>
-      </View>
+      </KeyboardAvoidingView>
+      <LowBalanceNudge />
     </SafeAreaView>
   );
 };
 
-// 4. Store (Unchanged)
 const StoreScreen = ({ navigation }) => {
-  const { coins, addCoins } = useContext(AppContext);
-  const [showReward, setShowReward] = useState(false);
-  const scaleAnim = useRef(new Animated.Value(0)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const { addCoins } = useContext(AppContext);
+  const [adsWatched, setAdsWatched] = useState(0);
+  const [invitesUsed, setInvitesUsed] = useState(0);
 
-  const buyPack = (pack) => {
-    Alert.alert("Purchase", `Buy ${pack.amount} coins?`, [
-      { text: "Cancel" },
-      { text: "Buy", onPress: () => { addCoins(pack.amount); triggerReward(); }}
-    ]);
+  const handleInvite = async () => {
+    await Share.share({ message: 'Join me on WohApp!!' });
+    if (invitesUsed < 10) setInvitesUsed(prev => prev + 1);
   };
 
-  const triggerReward = () => {
-    setShowReward(true);
-    Animated.sequence([
-      Animated.parallel([
-        Animated.spring(scaleAnim, { toValue: 1, friction: 5, useNativeDriver: true }),
-        Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true })
-      ]),
-      Animated.delay(1000),
-      Animated.timing(fadeAnim, { toValue: 0, duration: 500, useNativeDriver: true })
-    ]).start(() => setShowReward(false));
+  const handleWatchAd = () => {
+    if (adsWatched < 6) setAdsWatched(prev => prev + 1);
+    addCoins(10);
+  };
+
+  const renderSlot = (index, current, keyPrefix) => {
+    const isFilled = index < current;
+    return (
+      <View key={`${keyPrefix}-${index}`} style={[styles.slotCircle, isFilled && styles.slotFilled]}>
+        {isFilled && <Coins size={12} color="#000" />}
+      </View>
+    );
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <ChevronLeft color={THEME.text} size={28} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Coin Store</Text>
-      </View>
-      <View style={styles.balanceContainer}>
-        <Text style={styles.balanceLabel}>Current Balance</Text>
-        <Text style={styles.balanceValue}>{coins} Coins</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()}><ChevronLeft color="#fff" /></TouchableOpacity>
+        <Text style={styles.headerTitle}>Activity Center</Text>
       </View>
       <FlatList
-        data={COIN_PACKS}
-        keyExtractor={item => item.id}
+        ListHeaderComponent={() => (
+          <>
+            <View style={styles.activityBanner}>
+               <Text style={styles.actTitle}>Invite Friends & Earn</Text>
+               <View style={styles.slotRow}>{[...Array(10)].map((_, i) => renderSlot(i, invitesUsed, 'invite'))}</View>
+               <GradientBtn text="Invite Friends" onPress={handleInvite} disabled={invitesUsed >= 10} style={{marginTop:10}} />
+            </View>
+            <View style={styles.activityBanner}>
+               <Text style={styles.actTitle}>Watch Ads & Earn</Text>
+               <View style={styles.slotRow}>{[...Array(6)].map((_, i) => renderSlot(i, adsWatched, 'ad'))}</View>
+               <GradientBtn text="Watch Ad (+10c)" onPress={handleWatchAd} disabled={adsWatched >= 6} style={{marginTop:10}} />
+            </View>
+            <Text style={[styles.headerTitle, {marginTop:30, marginBottom:10}]}>Buy Coins</Text>
+          </>
+        )}
+        data={COIN_PACKS} numColumns={2} keyExtractor={item => item.id}
         renderItem={({ item }) => (
-          <TouchableOpacity style={styles.packCard} onPress={() => buyPack(item)}>
-            <View><Text style={styles.packAmount}>{item.amount} Coins</Text></View>
-            <View style={styles.priceBtn}><Text style={styles.priceText}>{item.price}</Text></View>
+          <TouchableOpacity onPress={() => addCoins(item.amount)} style={styles.packGridItem}>
+             <Text style={styles.packAmt}>{item.amount}</Text><Text style={{color:'#aaa', fontSize:12}}>Coins</Text>
+             <LinearGradient colors={THEME.gradientColors} start={{x:0,y:0}} end={{x:1,y:0}} style={styles.packPriceBtn}><Text style={{fontWeight:'bold'}}>{item.price}</Text></LinearGradient>
           </TouchableOpacity>
         )}
         contentContainerStyle={{ padding: 16 }}
       />
-      <RewardModal visible={showReward} amount="+" scale={scaleAnim} opacity={fadeAnim} />
     </SafeAreaView>
   );
 };
 
-const RewardModal = ({ visible, amount, scale, opacity }) => (
-  <Modal visible={visible} transparent animationType="none">
-    <View style={styles.rewardOverlay}>
-      <Animated.View style={[styles.rewardCard, { opacity: opacity, transform: [{ scale: scale }] }]}>
-        <Text style={{ fontSize: 80 }}>💰</Text>
-        <Text style={styles.rewardTitle}>Coins Added!</Text>
-      </Animated.View>
-    </View>
-  </Modal>
-);
-
-// --- NAVIGATION ---
 const Stack = createStackNavigator();
-
 export default function App() {
   return (
     <AppProvider>
       <SafeAreaProvider>
         <StatusBar style="light" />
         <NavigationContainer>
-           <RootNavigator />
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="Splash" component={SplashScreen} />
+            <Stack.Screen name="Onboarding" component={OnboardingScreen} />
+            <Stack.Screen name="Lobby" component={LobbyScreen} />
+            <Stack.Screen name="Chat" component={ChatScreen} />
+            <Stack.Screen name="Store" component={StoreScreen} presentation="modal" />
+          </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>
     </AppProvider>
   );
 }
 
-const RootNavigator = () => {
-  const { user, isLoading } = useContext(AppContext);
-
-  if (isLoading) return (
-    <View style={{flex:1, backgroundColor: THEME.background, justifyContent:'center', alignItems:'center'}}>
-      <ActivityIndicator size="large" color={THEME.primary} />
-    </View>
-  );
-
-  return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      {user ? (
-        <>
-          <Stack.Screen name="Lobby" component={LobbyScreen} />
-          <Stack.Screen name="Chat" component={ChatScreen} />
-          <Stack.Screen name="Store" component={StoreScreen} presentation="modal" />
-        </>
-      ) : (
-        <Stack.Screen name="Onboarding" component={OnboardingScreen} />
-      )}
-    </Stack.Navigator>
-  );
-};
-
-// --- STYLES ---
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: THEME.background },
   centerContent: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  brandContainer: { alignItems: 'center', marginBottom: 20 },
-  titleBig: { fontSize: 40, fontWeight: 'bold', color: THEME.primary, marginTop: 10 },
-  subtitle: { fontSize: 18, color: THEME.textSecondary, textAlign: 'center', marginBottom: 30 },
-  caption: { fontSize: 14, color: '#555', marginTop: 20 },
-
-  btnPrimary: { backgroundColor: THEME.primary, paddingVertical: 16, paddingHorizontal: 40, borderRadius: 30, width: '100%', alignItems: 'center', marginTop: 10 },
+  logoBox: { width: 80, height: 80, justifyContent: 'center', alignItems: 'center', borderRadius: 20, marginBottom:40 },
+  loadTrack: { width: '80%', height: 4, backgroundColor: '#333', borderRadius: 2, overflow: 'hidden' },
+  loadFill: { height: '100%', backgroundColor: '#D4AF37' },
+  titleBig: { fontSize: 40, fontWeight: 'bold', color: '#fff', textAlign: 'center' },
+  subtitle: { fontSize: 18, color: '#aaa', marginVertical: 20 },
+  caption: { fontSize: 12, color: '#555', marginTop: 40 },
+  gradientBtn: { paddingVertical: 16, borderRadius: 30, alignItems: 'center' },
   btnText: { color: '#000', fontWeight: 'bold', fontSize: 18 },
-  
-  rewardOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center' },
-  rewardCard: { backgroundColor: THEME.surface, padding: 40, borderRadius: 30, alignItems: 'center', borderWidth: 2, borderColor: THEME.primary },
-  rewardTitle: { fontSize: 32, fontWeight: 'bold', color: THEME.primary, marginTop: 10 },
-
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#333', backgroundColor: THEME.surface },
-  miniLogo: { marginRight: 8 },
-  headerBrand: { fontSize: 24, fontWeight: 'bold', color: THEME.text, letterSpacing: 1 },
-  coinBadge: { backgroundColor: THEME.primary, flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20 },
-  coinText: { color: '#000', fontWeight: 'bold', marginLeft: 6 },
-  
-  card: { backgroundColor: THEME.surface, borderRadius: 16, marginBottom: 16, overflow: 'hidden' },
-  cardImage: { width: '100%', height: 350 },
-  cardContent: { padding: 16 },
-  cardTitle: { fontSize: 22, fontWeight: 'bold', color: THEME.text },
-  cardTag: { fontSize: 16, color: THEME.primary, marginBottom: 12 },
-  cardActions: { flexDirection: 'row', gap: 10 },
-  actionBtn: { flex: 1, backgroundColor: THEME.primary, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 12, borderRadius: 8, gap: 8 },
-  actionBtnText: { color: '#000', fontWeight: 'bold', fontSize: 14 },
-
-  headerAvatar: { width: 40, height: 40, borderRadius: 20, marginLeft: 16 },
-  headerTitle: { fontSize: 18, fontWeight: 'bold', color: THEME.text },
-  statusText: { color: THEME.textSecondary, fontSize: 12 },
-  msgBubble: { padding: 12, borderRadius: 12, marginBottom: 10, maxWidth: '80%' },
-  msgUser: { backgroundColor: THEME.primary, alignSelf: 'flex-end' },
-  msgAi: { backgroundColor: '#333', alignSelf: 'flex-start' },
-  msgTextUser: { color: '#000', fontSize: 16 },
-  msgTextAi: { color: '#fff', fontSize: 16 },
-  inputArea: { flexDirection: 'row', padding: 10, borderTopWidth: 1, borderTopColor: '#333', backgroundColor: THEME.surface },
-  input: { flex: 1, backgroundColor: '#121212', color: '#fff', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, marginRight: 10 },
-  sendBtn: { backgroundColor: THEME.primary, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 20 },
-  sendBtnText: { color: '#000', fontWeight: 'bold' },
-  typingIndicator: { marginLeft: 16, marginBottom: 10, color: '#666', fontStyle: 'italic' },
-
-  balanceContainer: { backgroundColor: '#333', padding: 20, margin: 16, borderRadius: 12, alignItems: 'center' },
-  balanceLabel: { color: '#aaa', fontSize: 14 },
-  balanceValue: { color: THEME.primary, fontSize: 32, fontWeight: 'bold', marginTop: 8 },
-  packCard: { backgroundColor: THEME.surface, padding: 20, borderRadius: 12, marginBottom: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  packAmount: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
-  priceBtn: { backgroundColor: THEME.primary, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20 },
-  priceText: { fontWeight: 'bold', color: '#000' }
+  header: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, alignItems: 'center' },
+  headerBrand: { fontSize: 24, fontWeight: 'bold', color: '#fff' }, 
+  coinPill: { backgroundColor: '#000', borderColor: '#D4AF37', borderWidth: 1, flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, alignItems: 'center', gap: 5 },
+  coinPillText: { color: '#D4AF37', fontWeight: 'bold' },
+  card: { height: 250, marginBottom: 16, borderRadius: 16, overflow: 'hidden', backgroundColor: '#222' },
+  cardImage: { width: '100%', height: '100%' },
+  cardOverlay: { position: 'absolute', bottom: 0, width: '100%', padding: 16, paddingTop: 40 },
+  cardTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
+  cardTag: { color: '#ddd' },
+  priceBadge: { backgroundColor: '#000', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, marginTop: 5 },
+  priceText: { color: '#D4AF37', fontSize: 12, fontWeight: 'bold' },
+  fabContainer: { position: 'absolute', bottom: 20, right: 20, gap: 10 },
+  fab: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden' },
+  fabGradient: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  headerAvatar: { width: 40, height: 40, borderRadius: 20, marginHorizontal: 10 },
+  headerTitle: { color: '#fff', fontWeight: 'bold' },
+  statusText: { color: '#aaa', fontSize: 12 },
+  msgBubble: { padding: 12, borderRadius: 16, marginBottom: 10, maxWidth: '80%' },
+  msgUser: { alignSelf: 'flex-end', backgroundColor: '#333' },
+  msgAi: { alignSelf: 'flex-start', backgroundColor: '#000', borderWidth: 1, borderColor: '#333' },
+  msgTextUser: { color: '#fff' },
+  msgTextAi: { color: '#ddd' },
+  inputArea: { flexDirection: 'row', padding: 10, backgroundColor: '#111', alignItems: 'center' },
+  input: { flex: 1, backgroundColor: '#222', color: '#fff', borderRadius: 20, paddingHorizontal: 15, paddingVertical: 10, marginRight: 10 },
+  sendBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20 },
+  activityBanner: { backgroundColor: '#000', borderWidth: 1, borderColor: '#333', borderRadius: 12, padding: 16, marginBottom: 20 },
+  actTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  slotRow: { flexDirection: 'row', gap: 5, marginBottom: 10, flexWrap:'wrap' },
+  slotCircle: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#222', justifyContent: 'center', alignItems: 'center' },
+  slotFilled: { backgroundColor: '#D4AF37' },
+  packGridItem: { flex: 1, margin: 5, backgroundColor: '#111', padding: 20, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+  packAmt: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
+  packPriceBtn: { paddingHorizontal: 15, paddingVertical: 5, borderRadius: 15, marginTop: 10 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' },
+  nudgeCard: { width: '85%', padding: 25, borderRadius: 20, alignItems: 'center', borderWidth: 1, borderColor: '#D4AF37' },
+  closeBtn: { position: 'absolute', top: 10, right: 10 },
+  nudgeTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold', marginBottom: 20 },
+  dealBox: { borderWidth: 1, borderColor: '#D4AF37', padding: 15, borderRadius: 10, marginBottom: 20, width: '100%', alignItems: 'center' },
+  dealText: { color: '#D4AF37', textTransform: 'uppercase', fontSize: 10, fontWeight: 'bold' },
+  dealPrice: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
+  lockedImgBox: { width: 200, height: 200, justifyContent: 'center', alignItems: 'center' },
+  lockedImg: { width: '100%', height: '100%', opacity: 0.3 },
+  lockOverlay: { position: 'absolute', alignItems: 'center' },
+  unlockedImg: { width: 200, height: 200, borderRadius: 10 },
+  unlockBtn: { paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20, marginTop: 10 },
 });
